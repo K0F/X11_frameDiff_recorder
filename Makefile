@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -O3 -march=native
-LIBS = -lX11 -lGL -lXext
+LIBS = -lX11 -lGL -lXext -lrt -lasound
 
 TARGET = gl_overlay
 SRC = main.c
