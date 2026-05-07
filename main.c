@@ -40,7 +40,7 @@ int main() {
 
     char cmd[1024];
     sprintf(cmd, "ffmpeg -y -use_wallclock_as_timestamps 1 "
-                 "-f rawvideo -pixel_format bgra -video_size 720x576 -framerate 50 -i - "
+                 "-f rawvideo -pixel_format bgra -video_size 720x576 -framerate 25 -re -i - "
                  "-f pulse -i %s "
                  "-c:v libx264 -preset superfast -tune zerolatency "
                  "-c:a aac -b:a 192k -af aresample=async=1 "
