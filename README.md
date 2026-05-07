@@ -5,7 +5,6 @@ Program dumps X11 pixels and shm-copies them into ffmpeg pipe. It uses pulseaudi
  ## build
  ```bash
  make
- ./gl_overlay
  ```
 
  ## run
