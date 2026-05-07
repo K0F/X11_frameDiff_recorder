@@ -8,44 +8,43 @@
 #include <GL/gl.h>
 #include <GL/glx.h>
 #include <string.h>
+#include <time.h>
+#include <stdint.h>
 
 #define WIDTH 720
 #define HEIGHT 576
+#define TARGET_FPS 50
+
+// Extension function pointer for disabling V-Sync
+typedef void (*PFNGLXSWAPINTERVALEXTPROC)(Display* dpy, GLXDrawable drawable, int interval);
 
 int main() {
-    // 1. FFmpeg Setup - Open the pipe early
-
-char monitor_name[256] = "default";
-FILE *p = popen("pactl get-default-sink", "r");
-if (p) {
-    if (fgets(monitor_name, sizeof(monitor_name), p)) {
-        // Remove newline
-        monitor_name[strcspn(monitor_name, "\n")] = 0;
-        // Append .monitor
-        strcat(monitor_name, ".monitor");
+    // --- 1. Audio/FFmpeg Setup ---
+    char monitor_name[256] = "default";
+    FILE *p = popen("pactl get-default-sink", "r");
+    if (p) {
+        if (fgets(monitor_name, sizeof(monitor_name), p)) {
+            monitor_name[strcspn(monitor_name, "\n")] = 0;
+            strcat(monitor_name, ".monitor");
+        }
+        pclose(p);
     }
-    pclose(p);
-}
 
-// Then use monitor_name in your main ffmpeg popen string:
-char cmd[1024];
-sprintf(cmd, "ffmpeg -y -use_wallclock_as_timestamps 1 "
-             "-f rawvideo -pixel_format bgra -video_size 720x576 -framerate 50 -i - "
-             "-f pulse -i %s "
-             "-c:v libx264 -preset ultrafast -tune zerolatency "
-             "-c:a aac -b:a 192k -af aresample=async=1 "
-             "-pix_fmt yuv420p -shortest output.mp4", monitor_name);
+    char cmd[1024];
+    sprintf(cmd, "ffmpeg -y -use_wallclock_as_timestamps 1 "
+                 "-f rawvideo -pixel_format bgra -video_size 720x576 -framerate %d -i - "
+                 "-f pulse -i %s "
+                 "-c:v libx264 -preset ultrafast -tune zerolatency "
+                 "-c:a aac -b:a 192k -af aresample=async=1 "
+                 "-pix_fmt yuv420p -shortest output.mp4", TARGET_FPS, monitor_name);
 
-FILE *ffmpeg = popen(cmd, "w");
-
-    
-	// pic only
-    //FILE *ffmpeg = popen("ffmpeg -y -f rawvideo -pixel_format bgra -video_size 720x576 -re -i - -c:v libx264 -preset ultrafast -pix_fmt yuv420p output.mp4", "w");
+    FILE *ffmpeg = popen(cmd, "w");
     if (!ffmpeg) {
         fprintf(stderr, "Failed to open ffmpeg pipe\n");
         return 1;
     }
 
+    // --- 2. X11 & OpenGL Setup ---
     Display *display = XOpenDisplay(NULL);
     if (!display) return 1;
 
@@ -53,7 +52,6 @@ FILE *ffmpeg = popen(cmd, "w");
     int screen_width = DisplayWidth(display, DefaultScreen(display));
     int screen_height = DisplayHeight(display, DefaultScreen(display));
 
-    // OpenGL & Window Setup
     GLint att[] = { GLX_RGBA, GLX_DEPTH_SIZE, 24, GLX_DOUBLEBUFFER, None };
     XVisualInfo *vi = glXChooseVisual(display, 0, att);
     XSetWindowAttributes swa;
@@ -65,7 +63,13 @@ FILE *ffmpeg = popen(cmd, "w");
     GLXContext glc = glXCreateContext(display, vi, NULL, GL_TRUE);
     glXMakeCurrent(display, win, glc);
 
-    // MIT-SHM Setup
+    // Disable V-Sync so the GPU doesn't throttle us to the monitor's refresh rate
+    PFNGLXSWAPINTERVALEXTPROC glXSwapIntervalEXT = (PFNGLXSWAPINTERVALEXTPROC)glXGetProcAddress((const GLubyte*)"glXSwapIntervalEXT");
+    if (glXSwapIntervalEXT) {
+        glXSwapIntervalEXT(display, win, 0); 
+    }
+
+    // --- 3. MIT-SHM Setup ---
     XShmSegmentInfo shminfo;
     XImage *img = XShmCreateImage(display, vi->visual, vi->depth, ZPixmap, NULL, &shminfo, WIDTH, HEIGHT);
     shminfo.shmid = shmget(IPC_PRIVATE, img->bytes_per_line * img->height, IPC_CREAT | 0777);
@@ -83,6 +87,11 @@ FILE *ffmpeg = popen(cmd, "w");
 
     unsigned char *prev_buffer = calloc(WIDTH * HEIGHT * 4, 1);
     unsigned char *diff_buffer = malloc(WIDTH * HEIGHT * 4);
+
+    // --- 4. Timing Variables ---
+    struct timespec next_frame;
+    clock_gettime(CLOCK_MONOTONIC, &next_frame);
+    long frame_delay_ns = 1000000000 / TARGET_FPS; 
 
     XEvent xev;
     int running = 1;
@@ -102,54 +111,36 @@ FILE *ffmpeg = popen(cmd, "w");
         int cap_x = rx - (WIDTH / 2);
         int cap_y = ry - (HEIGHT / 2);
 
-        // Fixes the "misleading indentation" warning
         if (cap_x < 0) cap_x = 0; 
         if (cap_y < 0) cap_y = 0;
         if (cap_x + WIDTH > screen_width) cap_x = screen_width - WIDTH;
         if (cap_y + HEIGHT > screen_height) cap_y = screen_height - HEIGHT;
 
-        // 4. Capture and B&W Difference Logic
+        // Capture Frame
         XShmGetImage(display, root, img, cap_x, cap_y, AllPlanes);
-        unsigned char *src = (unsigned char *)img->data;
-
-uint32_t *src32 = (uint32_t *)img->data;
-uint32_t *prev32 = (uint32_t *)prev_buffer;
-uint32_t *diff32 = (uint32_t *)diff_buffer;
-
-for (int i = 0; i < WIDTH * HEIGHT; i++) {
-    uint32_t s = src32[i];
-    uint32_t p = prev32[i];
-
-    // Fast absolute difference for each channel packed in the int
-    // This is a rough but very fast way to get a grayscale-ish diff
-    unsigned char b = abs((s & 0xFF) - (p & 0xFF));
-    unsigned char g = abs(((s >> 8) & 0xFF) - ((p >> 8) & 0xFF));
-    unsigned char r = abs(((s >> 16) & 0xFF) - ((p >> 16) & 0xFF));
-
-	int temp_gray = (r + g + b); // No division = 3x brighter
-	unsigned char gray = (temp_gray > 255) ? 255 : (unsigned char)temp_gray;
-    
-    //unsigned char gray = (r + g + b) / 3;
-    
-    // Pack it back into BGRA (0xFF for alpha)
-    diff32[i] = (0xFF << 24) | (gray << 16) | (gray << 8) | gray;
-    prev32[i] = s;
-}
-
-		/* // color
-        // Capture and Diff
-        XShmGetImage(display, root, img, cap_x, cap_y, AllPlanes);
-        unsigned char *src = (unsigned char *)img->data;
-        for (int i = 0; i < WIDTH * HEIGHT * 4; i++) {
-            diff_buffer[i] = abs(src[i] - prev_buffer[i]);
-            prev_buffer[i] = src[i];
-        }
-        */
-
-
-        // 5. Pipe to FFmpeg and Render
-        fwrite(diff_buffer, 1, WIDTH * HEIGHT * 4, ffmpeg);
         
+        uint32_t *src32 = (uint32_t *)img->data;
+        uint32_t *prev32 = (uint32_t *)prev_buffer;
+        uint32_t *diff32 = (uint32_t *)diff_buffer;
+
+        // Motion Difference Calculation
+        for (int i = 0; i < WIDTH * HEIGHT; i++) {
+            uint32_t s = src32[i];
+            uint32_t p = prev32[i];
+
+            unsigned char b = abs((int)(s & 0xFF) - (int)(p & 0xFF));
+            unsigned char g = abs((int)((s >> 8) & 0xFF) - (int)((p >> 8) & 0xFF));
+            unsigned char r = abs((int)((s >> 16) & 0xFF) - (int)((p >> 16) & 0xFF));
+
+            int temp_gray = (r + g + b); 
+            unsigned char gray = (temp_gray > 255) ? 255 : (unsigned char)temp_gray;
+            
+            diff32[i] = (0xFF << 24) | (gray << 16) | (gray << 8) | gray;
+            prev32[i] = s;
+        }
+
+        // Pipe to FFmpeg
+        fwrite(diff_buffer, 1, WIDTH * HEIGHT * 4, ffmpeg);
 
         // Update Texture and Render
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, WIDTH, HEIGHT, 0, GL_BGRA, GL_UNSIGNED_BYTE, diff_buffer);
@@ -161,10 +152,18 @@ for (int i = 0; i < WIDTH * HEIGHT; i++) {
             glTexCoord2f(0, 0); glVertex2f(-1, 1);
         glEnd();
         glXSwapBuffers(display, win);
+
+        // --- 5. Precision Sleep to maintain 50 FPS ---
+        next_frame.tv_nsec += frame_delay_ns;
+        while (next_frame.tv_nsec >= 1000000000) {
+            next_frame.tv_sec++;
+            next_frame.tv_nsec -= 1000000000;
+        }
+        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next_frame, NULL);
     }
 
-    // --- Cleanup: Finalizing everything ---
-    pclose(ffmpeg); // This closes the pipe and saves the file correctly
+    // --- Cleanup ---
+    pclose(ffmpeg);
     XShmDetach(display, &shminfo);
     XDestroyImage(img);
     shmdt(shminfo.shmaddr);
