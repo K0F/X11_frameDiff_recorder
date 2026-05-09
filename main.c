@@ -36,7 +36,7 @@ int main() {
                  "-f pulse -i %s "
                  "-c:v libx264 -preset ultrafast -tune zerolatency "
                  "-c:a aac -b:a 192k -af aresample=async=1 "
-                 "-pix_fmt yuv420p -shortest output.mp4", TARGET_FPS, monitor_name);
+                 "-pix_fmt yuv420p -r %d -shortest output.mp4", TARGET_FPS, monitor_name, TARGET_FPS);
 
     FILE *ffmpeg = popen(cmd, "w");
     if (!ffmpeg) {

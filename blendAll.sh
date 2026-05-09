@@ -1,44 +1,48 @@
 #!/bin/bash
 
-# Collect files
+# 1. Get all videos and find the duration of the longest one
 files=(*.mp4)
 num_files=${#files[@]}
+max_dur=0
 
-if [ "$num_files" -lt 2 ]; then
-    echo "Need at least 2 videos."
-    exit 1
-fi
+for f in "${files[@]}"; do
+    dur=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$f")
+    if (( $(echo "$dur > $max_dur" | bc -l) )); then
+        max_dur=$dur
+    fi
+done
+
+echo "Longest video is $max_dur seconds. Padding others..."
 
 input_args=()
 v_prep=""
 
-# 1. Force every input to GRAYSCALE immediately
+# 2. Prepare inputs: Grayscale + pad to the specific max duration
 for (( i=0; i<$num_files; i++ )); do
     input_args+=("-i" "${files[$i]}")
-    v_prep+="[$i:v]format=gray[v$i]; "
+    # tpad=stop_duration forces it to match the longest video exactly
+    v_prep+="[$i:v]format=gray,tpad=stop_mode=add:stop_duration=$max_dur[v$i]; "
 done
 
-# 2. Chain the blend (now only working on the Y plane)
+# 3. Build the Blend Chain
 v_blend="[v0][v1]blend=all_mode='addition'[b1]"
 for (( i=2; i<$num_files; i++ )); do
     prev=$((i-1))
     v_blend+="; [b$prev][v$i]blend=all_mode='addition'[b$i]"
 done
-
 last_b_label="[b$((num_files-1))]"
 
-# 3. Audio Mix
+# 4. Audio Mix
 a_mix=""
 for (( i=0; i<$num_files; i++ )); do
     a_mix+="[$i:a]"
 done
-a_mix+="amix=inputs=$num_files[a_out]"
+a_mix+="amix=inputs=$num_files:duration=longest:dropout_transition=0[a_out]"
 
-# 4. Final Command
-# We convert back to yuv420p at the end just for player compatibility
+# 5. Final Execution (No -shortest needed now)
 ffmpeg "${input_args[@]}" \
 -filter_complex "$v_prep $v_blend; $a_mix" \
 -map "$last_b_label" -map "[a_out]" \
 -c:v libx264 -crf 18 -pix_fmt yuv420p \
 -c:a aac -b:a 192k \
-output_pure_bw.mp4
+output_fixed_exit.mp4
