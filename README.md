@@ -12,3 +12,5 @@ Program dumps X11 pixels and shm-copies them into ffmpeg pipe. It uses pulseaudi
  ./gl_overlay
  ```
   
+## todo:
+ -persistent gl overlay
