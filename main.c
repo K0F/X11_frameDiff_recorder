@@ -19,7 +19,7 @@
 typedef void (*PFNGLXSWAPINTERVALEXTPROC)(Display* dpy, GLXDrawable drawable, int interval);
 
 int main() {
-    // --- 1. Audio/FFmpeg Setup ---
+// --- 1. Audio/FFmpeg Setup ---
     char monitor_name[256] = "default";
     FILE *p = popen("pactl get-default-sink", "r");
     if (p) {
@@ -30,20 +30,33 @@ int main() {
         pclose(p);
     }
 
+    // Generate UTC Timestamp
+    time_t now = time(NULL);
+    struct tm *utc_time = gmtime(&now);
+    char timestamp[64];
+    // Format: YYYYMMDD_HHMMSS (e.g., 20260520_174030_diffrec.mp4)
+    strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", utc_time);
+
+    char filename[128];
+    snprintf(filename, sizeof(filename), "%s_diffrec.mp4", timestamp);
+
+    // Construct FFmpeg command (Fixed the -video_size mismatch to use WIDTH and HEIGHT)
     char cmd[1024];
-    sprintf(cmd, "ffmpeg -y -use_wallclock_as_timestamps 1 "
-                 "-f rawvideo -pixel_format bgra -video_size 720x576 -framerate %d -i - "
-                 "-f pulse -i %s "
-                 "-c:v libx264 -preset ultrafast -tune zerolatency "
-                 "-c:a aac -b:a 192k -af aresample=async=1 "
-                 "-pix_fmt yuv420p -r %d -shortest output.mp4", TARGET_FPS, monitor_name, TARGET_FPS);
+    snprintf(cmd, sizeof(cmd), 
+             "ffmpeg -y -use_wallclock_as_timestamps 1 "
+             "-f rawvideo -pixel_format bgra -video_size %dx%d -framerate %d -i - "
+             "-f pulse -i %s "
+             "-c:v libx264 -preset ultrafast -tune zerolatency "
+             "-c:a aac -b:a 192k -af aresample=async=1 "
+             "-pix_fmt yuv420p -r %d -shortest %s", 
+             WIDTH, HEIGHT, TARGET_FPS, monitor_name, TARGET_FPS, filename);
 
     FILE *ffmpeg = popen(cmd, "w");
     if (!ffmpeg) {
         fprintf(stderr, "Failed to open ffmpeg pipe\n");
         return 1;
     }
-
+    
     // --- 2. X11 & OpenGL Setup ---
     Display *display = XOpenDisplay(NULL);
     if (!display) return 1;
