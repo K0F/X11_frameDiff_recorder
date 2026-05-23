@@ -44,7 +44,7 @@ int main() {
     snprintf(filename, sizeof(filename), "%s_diffrec.mp4", timestamp);
 
   }else{
-    snprintf(filename, sizeof(filename), "%s_:rec.mp4", timestamp);
+    snprintf(filename, sizeof(filename), "%s_rec.mp4", timestamp);
 
   }
   // Construct FFmpeg command (Fixed the -video_size mismatch to use WIDTH and HEIGHT)
