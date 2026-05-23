@@ -11,7 +11,7 @@
 #include <time.h>
 #include <stdint.h>
 
-#define WIDTH 720
+#define WIDTH 814 // sqrt(2) PAL format
 #define HEIGHT 576
 #define TARGET_FPS 50
 
