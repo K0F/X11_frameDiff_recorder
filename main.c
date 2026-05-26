@@ -11,9 +11,10 @@
 #include <time.h>
 #include <stdint.h>
 
-#define WIDTH 814 // sqrt(2) PAL format
+// #define WIDTH 814 // sqrt(2) PAL format silver one
+#define WIDTH 932 // sqrt(2) PAL format silver one
 #define HEIGHT 576
-#define TARGET_FPS 50
+#define TARGET_FPS 60
 
 #define FRAME_DIFF false // doing frame-differencing at all
 
@@ -55,7 +56,7 @@ int main() {
       "-f pulse -i %s "
       "-c:v libx264 -preset ultrafast -tune zerolatency "
       "-c:a aac -b:a 192k -af aresample=async=1 "
-      "-pix_fmt yuv420p -qp 22 -r %d -shortest %s", 
+      "-pix_fmt yuv420p -qp 18 -r %d -shortest %s", 
       WIDTH, HEIGHT, TARGET_FPS, monitor_name, TARGET_FPS, filename);
 
   FILE *ffmpeg = popen(cmd, "w");
